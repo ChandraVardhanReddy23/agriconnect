@@ -46,6 +46,7 @@ def init_db() -> None:
                 harvest_date TEXT DEFAULT '',
                 quality TEXT DEFAULT 'standard',
                 description TEXT DEFAULT '',
+                photo_url TEXT DEFAULT '',
                 status TEXT DEFAULT 'available',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -73,6 +74,7 @@ def init_db() -> None:
                 payment_status TEXT DEFAULT 'unpaid',
                 quality_status TEXT DEFAULT 'pending',
                 delivery_status TEXT DEFAULT 'placed',
+                delivery_deadline TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -97,11 +99,16 @@ def init_db() -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(orders)").fetchall()}
         if "last_offer_by" not in columns:
             conn.execute("ALTER TABLE orders ADD COLUMN last_offer_by TEXT DEFAULT 'buyer'")
+        if "delivery_deadline" not in columns:
+            conn.execute("ALTER TABLE orders ADD COLUMN delivery_deadline TEXT")
         user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
         if "lat" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN lat REAL")
         if "lon" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN lon REAL")
+        listing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
+        if "photo_url" not in listing_columns:
+            conn.execute("ALTER TABLE listings ADD COLUMN photo_url TEXT DEFAULT ''")
 
 
 def row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:

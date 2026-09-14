@@ -50,12 +50,51 @@ def get_advice(crop: str, question: str) -> str:
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
         temperature=0,
         messages=[
-            {"role": "system", "content": "Return only JSON: {\"answer\":\"...\"}."},
+            {"role": "system", "content": (
+                "Return only JSON: {\"answer\":\"...\"}. The answer must be under 120 words, "
+                "with one-line summary followed by up to 4 bullet points using '- '. "
+                "Do not use headers or bold markdown."
+            )},
             {"role": "user", "content": f"Crop: {crop}\nQuestion: {question}"},
         ],
     )
     content = response.choices[0].message.content or ""
     return _strict_json(content)["answer"]
+
+
+def generate_market_narrative(
+    crop: str, region: str, current_average: float | None, regional_average: float | None,
+    change_percent: float | None, available: bool,
+) -> str | None:
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key or not available or current_average is None or regional_average is None or change_percent is None:
+        return None
+    try:
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+            temperature=0.2,
+            messages=[{
+                "role": "system",
+                "content": (
+                    "Write a short 2-3 sentence proactive market recommendation. Use only the "
+                    "numbers supplied by the user; do not invent, estimate, or assume any other "
+                    "price data. Return plain text only."
+                ),
+            }, {
+                "role": "user",
+                "content": (
+                    f"Crop: {crop}\nRegion: {region}\nCurrent average: {current_average}\n"
+                    f"Regional average: {regional_average}\nChange percent: {change_percent}\n"
+                    f"Available: {available}"
+                ),
+            }],
+        )
+        text = (response.choices[0].message.content or "").strip()
+        return text or None
+    except Exception:
+        return None
 
 
 def extract_listing(raw_text: str) -> dict[str, Any]:

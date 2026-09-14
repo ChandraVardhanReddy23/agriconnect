@@ -34,18 +34,17 @@ export default function OrderTracking({ order, role, counterPrice, setCounterPri
   const validActions = getValidActions(order, role);
   const progress = { MATCHED: 15, NEGOTIATING: 25, CONFIRMED: 40, PICKUP_SCHEDULED: 60, IN_TRANSIT: 75, DELIVERED: 90, COMPLETED: 100 }[order.order_status] || 10;
   const paymentProgress = { NONE: 10, PENDING: 25, ESCROW_HELD: 60, RELEASED: 100, DISPUTED: 100 }[order.payment_status] || 10;
-  const confirmed = ['CONFIRMED', 'PICKUP_SCHEDULED', 'IN_TRANSIT', 'DELIVERED', 'COMPLETED', 'DISPUTED'].includes(order.order_status);
   return <section className="card order-panel">
     <div className="section-heading"><h3>4–6. {farmer ? 'Opportunity, negotiation and tracking' : 'Negotiation and order tracking'}</h3><button className="link" onClick={onClose}>Close</button></div>
     <div className="order-summary"><b>{order.crop} ({order.quantity} {order.quantity === 1 ? 'quintal' : 'quintals'}) with {farmer ? order.buyer_name : order.farmer_name}</b><span>Current offer: <strong>{money(order.current_offer_price)}</strong></span></div>
     <div className="turn-label">{validActions.message || `Your turn — choose an action below.`}</div>
     <div className="profit-grid">
       {farmer ? <>
-        <div className="profit"><small>Net farmer payout</small><b>{confirmed ? money(order.net_farmer_payout) : '—'}</b></div>
-        <div><small>Total amount</small><b>{confirmed ? money(order.total_amount) : '—'}</b></div>
-        <div><small>Logistics</small><b>{confirmed ? `-${money(order.logistics_cost)}` : '—'}</b></div>
-        <div><small>Platform fee</small><b>{confirmed ? `-${money(order.platform_fee)}` : '—'}</b></div>
-      </> : <div className="profit buyer-total"><small>{order.payment_status === 'ESCROW_HELD' || order.payment_status === 'RELEASED' ? 'Amount paid' : 'Amount to pay'}</small><b>{confirmed ? money(order.total_amount) : '—'}</b></div>}
+        <div className={`profit ${order.payout_is_final ? '' : 'estimate'}`}><small>{order.payout_is_final ? 'Net farmer payout' : `Estimated net payout at ${money(order.current_offer_price)}`} {!order.payout_is_final && <span className="estimate-badge">Estimate</span>}</small><b>{order.net_farmer_payout == null ? '—' : money(order.net_farmer_payout)}</b></div>
+        <div className={order.payout_is_final ? '' : 'estimate'}><small>Total amount</small><b>{money(order.total_amount)}</b></div>
+        <div className={order.payout_is_final ? '' : 'estimate'}><small>Logistics</small><b>{order.logistics_cost == null ? '—' : `-${money(order.logistics_cost)}`}</b></div>
+        <div className={order.payout_is_final ? '' : 'estimate'}><small>Platform fee</small><b>{order.platform_fee == null ? '—' : `-${money(order.platform_fee)}`}</b></div>
+      </> : <div className="profit buyer-total"><small>{order.payment_status === 'ESCROW_HELD' || order.payment_status === 'RELEASED' ? 'Amount paid' : 'Amount to pay'}</small><b>{money(order.total_amount)}</b></div>}
     </div>
     {validActions.actions.some((action) => action === 'accept' || action === 'counter') && <div className="form-actions">
       {validActions.actions.includes('accept') && <button className="primary" onClick={onAccept}>{farmer ? "Accept Buyer's Offer" : "Accept Farmer's Price"}</button>}
