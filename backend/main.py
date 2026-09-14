@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import login, signup
 from .db import get_connection, init_db, row_to_dict, rows_to_dict
-from .llm import extract_listing, get_advice
+from .llm import extract_listing, generate_market_narrative, get_advice
 from .matching import delivery_score, haversine, rank_matches
 from .models import (
     AdvisoryRequest, CounterRequest, DemandCreate, ListingCreate, ListingIngestRequest, LoginRequest,
@@ -70,8 +70,8 @@ def create_listing(payload: ListingCreate) -> dict[str, Any]:
             raise HTTPException(400, "farmer_id must belong to a farmer")
         cursor = conn.execute(
             """INSERT INTO listings
-            (farmer_id,crop,variety,quantity,unit,price,location,harvest_date,quality,description)
-            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (farmer_id,crop,variety,quantity,unit,price,location,harvest_date,quality,description,photo_url)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             tuple(payload.model_dump().values()),
         )
         return row_to_dict(conn.execute("SELECT * FROM listings WHERE id=?", (cursor.lastrowid,)).fetchone())
@@ -113,6 +113,7 @@ def ingest_listing(payload: ListingCreate | ListingIngestRequest) -> dict[str, A
         harvest_date=str(extracted["availability_start"]),
         quality=str(extracted["quality_grade"]),
         description=payload.raw_text,
+        photo_url=payload.photo_url,
     )
     return create_listing(listing)
 
@@ -151,9 +152,14 @@ def match_listing_buyers(listing_id: int) -> list[dict[str, Any]]:
         item = dict(row)
         price_score = min(item["agreed_price"] / listing["price"], 1.2) / 1.2
         qty_score = 1 - abs(item["quantity"] - listing["quantity"]) / max(item["quantity"], listing["quantity"])
-        distance_score = 0.7 if item["buyer_location"] and item["buyer_location"].lower() != listing["location"].lower() else 1.0
+        farmer_point = location_point(listing["location"])
+        buyer_point = location_point(item["buyer_location"] or "")
+        distance_km = haversine(*farmer_point, *buyer_point)
+        distance_score = max(0, 1 - distance_km / 300)
         quality_score = 1.0 if listing["quality"].lower() in ("a", "premium") else 0.8
-        delivery_fit, days_margin = delivery_score(listing, {"delivery_deadline": ""})
+        delivery_fit, days_margin = delivery_score(
+            listing, {"delivery_deadline": item.get("delivery_deadline") or ""}
+        )
         breakdown = {
             "price_score": round(price_score, 2),
             "qty_score": round(max(0, qty_score), 2),
@@ -161,7 +167,7 @@ def match_listing_buyers(listing_id: int) -> list[dict[str, Any]]:
             "quality_score": quality_score,
             "delivery_score": delivery_fit,
             "days_margin": days_margin,
-            "distance_km": None,
+            "distance_km": round(distance_km, 2),
         }
         item["score_breakdown"] = breakdown
         item["total_score"] = round(
@@ -266,9 +272,21 @@ def create_order(payload: OrderCreate) -> dict[str, Any]:
         if payload.quantity > listing["quantity"]:
             raise HTTPException(400, "Requested quantity exceeds listing")
         price = payload.agreed_price or listing["price"]
+        delivery_deadline = payload.delivery_deadline
+        if delivery_deadline is None:
+            demand = conn.execute(
+                """SELECT needed_by FROM demands
+                   WHERE buyer_id=? AND lower(crop)=lower(?) AND needed_by != ''
+                   ORDER BY created_at DESC LIMIT 1""",
+                (payload.buyer_id, listing["crop"]),
+            ).fetchone()
+            delivery_deadline = demand["needed_by"] if demand else None
         cursor = conn.execute(
-            "INSERT INTO orders (listing_id,buyer_id,quantity,agreed_price,last_offer_by) VALUES (?,?,?,?,?)",
-            (payload.listing_id, payload.buyer_id, payload.quantity, price, "buyer"),
+            """INSERT INTO orders
+               (listing_id,buyer_id,quantity,agreed_price,last_offer_by,delivery_deadline)
+               VALUES (?,?,?,?,?,?)""",
+            (payload.listing_id, payload.buyer_id, payload.quantity, price, "buyer",
+             delivery_deadline),
         )
         conn.execute("UPDATE listings SET status='reserved' WHERE id=?", (payload.listing_id,))
         order_id = cursor.lastrowid
@@ -306,17 +324,22 @@ def _add_order_values(order: dict[str, Any]) -> dict[str, Any]:
     order["payment_status"] = payment_status
     current_offer = order["counter_price"] or order["agreed_price"]
     order["current_offer_price"] = current_offer
-    if order_status in ("CONFIRMED", "PICKUP_SCHEDULED", "IN_TRANSIT", "DELIVERED", "COMPLETED", "DISPUTED"):
+    if current_offer:
         total_amount = current_offer * order["quantity"]
         order["total_amount"] = round(total_amount, 2)
         order["platform_fee"] = round(total_amount * 0.02, 2)
         order["logistics_cost"] = round(total_amount * 0.08, 2)
         order["net_farmer_payout"] = round(total_amount - order["platform_fee"] - order["logistics_cost"], 2)
+        order["payout_is_final"] = order_status in (
+            "CONFIRMED", "PICKUP_SCHEDULED", "IN_TRANSIT", "DELIVERED",
+            "COMPLETED", "DISPUTED",
+        )
     else:
         order["total_amount"] = None
         order["platform_fee"] = None
         order["logistics_cost"] = None
         order["net_farmer_payout"] = None
+        order["payout_is_final"] = False
     return order
 
 
@@ -526,14 +549,20 @@ def regional_advisory(crop: str, region: str) -> dict[str, Any]:
     baseline_average = sum(prices[midpoint:]) / max(1, len(prices[midpoint:]))
     change_percent = ((recent_average - baseline_average) / baseline_average * 100) if baseline_average else 0
     advice = "wait" if change_percent > 5 else "sell_now"
+    narrative = generate_market_narrative(
+        crop, region, round(recent_average, 2), round(baseline_average, 2),
+        round(change_percent, 2), True,
+    )
     return {
         "crop": crop, "region": region, "available": True,
         "current_average": round(recent_average, 2),
         "regional_average": round(baseline_average, 2), "change_percent": round(change_percent, 2),
         "advice": advice,
-        "message": f"Current average ₹{recent_average:.0f}/quintal is {abs(change_percent):.1f}% "
-                   f"{'higher' if change_percent >= 0 else 'lower'} than the 10-day regional average "
-                   f"of ₹{baseline_average:.0f}.",
+        "message": narrative or (
+            f"Current average ₹{recent_average:.0f}/quintal is {abs(change_percent):.1f}% "
+            f"{'higher' if change_percent >= 0 else 'lower'} than the 10-day regional average "
+            f"of ₹{baseline_average:.0f}."
+        ),
     }
 
 
@@ -546,16 +575,25 @@ def optimize_routes(buyer_id: int) -> dict[str, Any]:
                FROM orders o JOIN listings l ON l.id=o.listing_id
                JOIN users farmer ON farmer.id=l.farmer_id
                JOIN users buyer ON buyer.id=o.buyer_id
-               WHERE o.buyer_id=? AND o.status IN ('pending','countered','accepted','paid')""",
+               WHERE o.buyer_id=? AND o.status IN ('pending','countered','accepted')""",
             (buyer_id,),
         ).fetchall()
     if len(rows) < 2:
         return {"message": "No route consolidation opportunities right now"}
     buyer_point = location_point(rows[0]["buyer_location"])
-    stops = [{"name": row["farmer_name"], "location": row["farmer_location"],
-              "point": location_point(row["farmer_location"]), "quantity": row["quantity"]}
-             for row in rows]
-    separate_distance = sum(haversine(*stop["point"], *buyer_point) for stop in stops)
+    grouped = {}
+    for row in rows:
+        key = row["farmer_location"].strip().lower()
+        stop = grouped.setdefault(key, {
+            "name": row["farmer_name"], "location": row["farmer_location"],
+            "point": location_point(row["farmer_location"]), "quantity": 0, "order_count": 0,
+        })
+        stop["quantity"] += row["quantity"]
+        stop["order_count"] += 1
+    stops = list(grouped.values())
+    separate_distance = 2 * sum(
+        haversine(*location_point(row["farmer_location"]), *buyer_point) for row in rows
+    )
     remaining = stops.copy()
     current = buyer_point
     route = []
@@ -567,9 +605,12 @@ def optimize_routes(buyer_id: int) -> dict[str, Any]:
         current = next_stop["point"]
         remaining.remove(next_stop)
     combined_distance += haversine(*current, *buyer_point)
+    per_stop_fee = 150
+    separate_cost = separate_distance * 8 + len(rows) * per_stop_fee
+    combined_cost = combined_distance * 8 + len(stops) * per_stop_fee
     return {
-        "separate_trip_cost": round(separate_distance * 8, 2),
-        "combined_trip_cost": round(combined_distance * 8, 2),
-        "savings": round(max(0, (separate_distance - combined_distance) * 8), 2),
+        "separate_trip_cost": round(separate_cost, 2),
+        "combined_trip_cost": round(combined_cost, 2),
+        "savings": round(max(0, separate_cost - combined_cost), 2),
         "route_order": [f"{stop['name']} ({stop['location']})" for stop in route],
     }

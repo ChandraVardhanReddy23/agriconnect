@@ -44,11 +44,13 @@ class ListingCreate(BaseModel):
     harvest_date: str = ""
     quality: str = "standard"
     description: str = ""
+    photo_url: str = Field(default="", max_length=2_000_000)
 
 
 class ListingIngestRequest(BaseModel):
     farmer_id: int
     raw_text: str = Field(min_length=5)
+    photo_url: str = Field(default="", max_length=2_000_000)
 
 
 class DemandCreate(BaseModel):
@@ -73,6 +75,7 @@ class OrderCreate(BaseModel):
     buyer_id: int
     quantity: float = Field(gt=0)
     agreed_price: Optional[float] = None
+    delivery_deadline: str | None = None
 
 
 class CounterRequest(BaseModel):

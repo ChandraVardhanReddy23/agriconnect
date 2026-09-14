@@ -1,5 +1,6 @@
-"""Seed demo users, listings and mandi prices. Run: python -m backend.seed_data"""
+"""Seed demo users, listings, orders and mandi prices. Run: python -m backend.seed_data"""
 
+from datetime import datetime, timedelta
 from .db import get_connection, init_db
 
 USERS = [
@@ -37,13 +38,48 @@ def seed() -> None:
             (farmer_id,crop,variety,quantity,unit,price,location,harvest_date,quality,description)
             VALUES (?,?,?,?,?,?,?,?,?,?)""", listings
         )
-        prices = [
-            ("Tomato", "Nashik Mandi", 2100, "quintal"),
-            ("Onion", "Pune Mandi", 1750, "quintal"),
-            ("Wheat", "Aurangabad Mandi", 2550, "quintal"),
-            ("Cotton", "Nagpur Mandi", 6900, "quintal"),
+        listing_ids = [
+            row["id"] for row in conn.execute(
+                "SELECT id FROM listings WHERE farmer_id IN (?,?,?,?) ORDER BY id",
+                tuple(ids[:4]),
+            ).fetchall()
         ]
-        conn.executemany("INSERT INTO mandi_prices (crop,market,price,unit) VALUES (?,?,?,?)", prices)
+        orders = [
+            (listing_ids[0], ids[4], 20, 2200, "2026-09-20"),
+            (listing_ids[1], ids[4], 30, 1800, "2026-09-22"),
+            (listing_ids[2], ids[5], 15, 2600, "2026-09-19"),
+            (listing_ids[0], ids[6], 10, 2200, "2026-09-18"),
+        ]
+        conn.executemany(
+            """INSERT INTO orders
+               (listing_id,buyer_id,quantity,agreed_price,delivery_deadline)
+               VALUES (?,?,?,?,?)""",
+            orders,
+        )
+        conn.executemany(
+            "UPDATE listings SET status='reserved' WHERE id=?",
+            [(order[0],) for order in orders],
+        )
+        today = datetime.now().date()
+        trends = {
+            "Tomato": [2060, 2080, 2090, 2110, 2130, 2150, 2170, 2190, 2220],
+            "Onion": [1830, 1810, 1800, 1790, 1770, 1760, 1750, 1730, 1710],
+            "Wheat": [2550, 2555, 2548, 2552, 2550, 2549, 2553, 2551, 2550],
+            "Cotton": [6820, 6860, 6890, 6930, 6970, 7000, 7040, 7070, 7100],
+        }
+        markets = {
+            "Tomato": "Nashik Mandi", "Onion": "Nashik Mandi",
+            "Wheat": "Nashik Mandi", "Cotton": "Nashik Mandi",
+        }
+        prices = [
+            (crop, markets[crop], price, "quintal", (today - timedelta(days=offset)).isoformat())
+            for crop, values in trends.items()
+            for offset, price in enumerate(reversed(values))
+        ]
+        conn.executemany(
+            "INSERT INTO mandi_prices (crop,market,price,unit,recorded_on) VALUES (?,?,?,?,?)",
+            prices,
+        )
     print("AgriConnect demo credentials (passwords are intentionally plaintext for this MVP):")
     for user in USERS:
         print(f"{user[3]:7} {user[1]:24} / {user[2]}")
