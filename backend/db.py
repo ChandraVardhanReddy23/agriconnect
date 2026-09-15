@@ -27,9 +27,11 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE,
                 password TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('farmer', 'buyer')),
+                role TEXT NOT NULL CHECK (role IN ('farmer', 'buyer', 'transporter')),
                 location TEXT DEFAULT '',
                 phone TEXT DEFAULT '',
+                vehicle_type TEXT DEFAULT '',
+                vehicle_capacity REAL,
                 lat REAL,
                 lon REAL,
                 rating REAL DEFAULT 4.0,
@@ -76,6 +78,11 @@ def init_db() -> None:
                 quality_status TEXT DEFAULT 'pending',
                 delivery_status TEXT DEFAULT 'placed',
                 delivery_deadline TEXT,
+                transporter_id INTEGER REFERENCES users(id),
+                route_id TEXT,
+                pickup_photo_url TEXT DEFAULT '',
+                actual_pickup_at TEXT,
+                transporter_delivery_photo_url TEXT DEFAULT '',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -102,6 +109,15 @@ def init_db() -> None:
             conn.execute("ALTER TABLE orders ADD COLUMN last_offer_by TEXT DEFAULT 'buyer'")
         if "delivery_deadline" not in columns:
             conn.execute("ALTER TABLE orders ADD COLUMN delivery_deadline TEXT")
+        for column, definition in (
+            ("transporter_id", "INTEGER REFERENCES users(id)"),
+            ("route_id", "TEXT"),
+            ("pickup_photo_url", "TEXT DEFAULT ''"),
+            ("actual_pickup_at", "TEXT"),
+            ("transporter_delivery_photo_url", "TEXT DEFAULT ''"),
+        ):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE orders ADD COLUMN {column} {definition}")
         user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
         if "lat" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN lat REAL")
@@ -109,6 +125,44 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN lon REAL")
         if "rating" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN rating REAL DEFAULT 4.0")
+        if "vehicle_type" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN vehicle_type TEXT DEFAULT ''")
+        if "vehicle_capacity" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN vehicle_capacity REAL")
+        user_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()["sql"]
+        if "transporter" not in user_sql:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute(
+                """CREATE TABLE users_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    password TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('farmer', 'buyer', 'transporter')),
+                    location TEXT DEFAULT '',
+                    phone TEXT DEFAULT '',
+                    vehicle_type TEXT DEFAULT '',
+                    vehicle_capacity REAL,
+                    lat REAL,
+                    lon REAL,
+                    rating REAL DEFAULT 4.0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )"""
+            )
+            conn.execute(
+                """INSERT INTO users_new
+                   (id,name,email,password,role,location,phone,vehicle_type,
+                    vehicle_capacity,lat,lon,rating,created_at)
+                   SELECT id,name,email,password,role,location,phone,
+                          COALESCE(vehicle_type,''),vehicle_capacity,lat,lon,
+                          COALESCE(rating,4.0),created_at
+                   FROM users"""
+            )
+            conn.execute("DROP TABLE users")
+            conn.execute("ALTER TABLE users_new RENAME TO users")
+            conn.execute("PRAGMA foreign_keys = ON")
         listing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
         if "photo_url" not in listing_columns:
             conn.execute("ALTER TABLE listings ADD COLUMN photo_url TEXT DEFAULT ''")

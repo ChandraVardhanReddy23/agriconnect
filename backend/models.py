@@ -5,16 +5,23 @@ demo only. Production code must never expose or persist plaintext passwords.
 """
 
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SignupRequest(BaseModel):
     name: str
     email: str
     password: str
-    role: Literal["farmer", "buyer"]
+    role: Literal["farmer", "buyer", "transporter"]
     location: str = ""
     phone: str = ""
+    vehicle_type: str = ""
+    vehicle_capacity: float | None = None
+
+    @field_validator("vehicle_capacity", mode="before")
+    @classmethod
+    def empty_vehicle_capacity_is_none(cls, value):
+        return None if value == "" else value
     lat: float | None = None
     lon: float | None = None
 
@@ -31,6 +38,8 @@ class UserOut(BaseModel):
     role: str
     location: str = ""
     phone: str = ""
+    vehicle_type: str = ""
+    vehicle_capacity: float | None = None
 
 
 class ListingCreate(BaseModel):
@@ -114,3 +123,12 @@ class PaymentRequest(BaseModel):
 class QualityRequest(BaseModel):
     status: Literal["passed", "failed", "pending"]
     note: str = ""
+
+
+class RouteClaimRequest(BaseModel):
+    transporter_id: int
+
+
+class TransportPhotoRequest(BaseModel):
+    transporter_id: int
+    photo_url: str = Field(default="", max_length=2_000_000)

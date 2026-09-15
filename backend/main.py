@@ -1,3 +1,4 @@
+import hashlib
 from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +9,8 @@ from .llm import extract_listing, generate_market_narrative, get_advice
 from .matching import delivery_score, haversine, rank_matches
 from .models import (
     AdvisoryRequest, CounterRequest, DemandCreate, ListingCreate, ListingIngestRequest, LoginRequest,
-    ListingUpdate, MatchRequest, OrderCreate, PaymentRequest, QualityRequest, SignupRequest,
+    ListingUpdate, MatchRequest, OrderCreate, PaymentRequest, QualityRequest, RouteClaimRequest,
+    SignupRequest, TransportPhotoRequest,
 )
 
 PLATFORM_FEE_RATE = 0.0  # 0% introductory rate during pilot phase
@@ -58,7 +60,10 @@ def auth_login(payload: LoginRequest) -> dict[str, Any]:
 @app.get("/api/users/{user_id}")
 def get_user(user_id: int) -> dict[str, Any]:
     with get_connection() as conn:
-        user = row_to_dict(conn.execute("SELECT id,name,email,role,location,phone,rating FROM users WHERE id=?", (user_id,)).fetchone())
+        user = row_to_dict(conn.execute(
+            """SELECT id,name,email,role,location,phone,rating,vehicle_type,vehicle_capacity
+               FROM users WHERE id=?""", (user_id,)
+        ).fetchone())
     if not user:
         raise HTTPException(404, "User not found")
     return user
@@ -376,10 +381,14 @@ def _order(order_id: int) -> dict[str, Any]:
     with get_connection() as conn:
         order = row_to_dict(conn.execute(
             """SELECT o.*, l.crop,l.variety,l.location,l.farmer_id,l.price AS listing_price,
-                      u.name AS farmer_name, u.rating AS farmer_rating, buyer.name AS buyer_name
+                      u.name AS farmer_name, u.rating AS farmer_rating, buyer.name AS buyer_name,
+                      buyer.location AS buyer_location, transporter.name AS transporter_name,
+                      transporter.phone AS transporter_phone
                FROM orders o JOIN listings l ON l.id=o.listing_id
                JOIN users u ON u.id=l.farmer_id
-               JOIN users buyer ON buyer.id=o.buyer_id WHERE o.id=?""", (order_id,)).fetchone())
+               JOIN users buyer ON buyer.id=o.buyer_id
+               LEFT JOIN users transporter ON transporter.id=o.transporter_id
+               WHERE o.id=?""", (order_id,)).fetchone())
     if not order:
         raise HTTPException(404, "Order not found")
     return _add_order_values(order)
@@ -402,11 +411,13 @@ def get_order(order_id: int) -> dict[str, Any]:
 @app.get("/api/orders")
 def list_orders(user_id: int | None = None, role: str | None = None) -> list[dict[str, Any]]:
     query = """SELECT o.*, l.crop,l.location,l.farmer_id,
-                      farmer.name AS farmer_name, buyer.name AS buyer_name
+                      farmer.name AS farmer_name, buyer.name AS buyer_name,
+                      transporter.name AS transporter_name
                FROM orders o
                JOIN listings l ON l.id=o.listing_id
                JOIN users farmer ON farmer.id=l.farmer_id
-               JOIN users buyer ON buyer.id=o.buyer_id"""
+               JOIN users buyer ON buyer.id=o.buyer_id
+               LEFT JOIN users transporter ON transporter.id=o.transporter_id"""
     args = []
     if user_id and role == "buyer":
         query += " WHERE o.buyer_id=?"
@@ -485,6 +496,189 @@ def advance_order(order_id: int) -> dict[str, Any]:
     with get_connection() as conn:
         conn.execute("UPDATE orders SET delivery_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                      (next_status, order_id))
+    return _order(order_id)
+
+
+def _route_id(order_ids: list[int]) -> str:
+    digest = hashlib.sha1(",".join(map(str, sorted(order_ids))).encode()).hexdigest()[:12]
+    return f"route-{digest}"
+
+
+def _route_from_rows(rows: list[dict[str, Any]], route_id: str) -> dict[str, Any]:
+    buyer_point = location_point(rows[0]["buyer_location"])
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = row["farmer_location"].strip().lower()
+        stop = grouped.setdefault(key, {
+            "farmer_name": row["farmer_name"],
+            "farmer_phone": row["farmer_phone"],
+            "location": row["farmer_location"],
+            "point": location_point(row["farmer_location"]),
+            "quantity": 0,
+            "order_count": 0,
+            "order_ids": [],
+            "orders": [],
+        })
+        stop["quantity"] += row["quantity"]
+        stop["order_count"] += 1
+        stop["order_ids"].append(row["id"])
+        stop["orders"].append({
+            "id": row["id"],
+            "quantity": row["quantity"],
+            "delivery_status": row["delivery_status"],
+            "order_status": _add_order_values({
+                "status": row["status"],
+                "payment_status": row["payment_status"],
+                "delivery_status": row["delivery_status"],
+                "counter_price": None,
+                "agreed_price": 0,
+                "quantity": row["quantity"],
+            })["order_status"],
+            "payment_status": row["payment_status"],
+        })
+    remaining = list(grouped.values())
+    current = buyer_point
+    stops = []
+    total_distance = 0
+    while remaining:
+        stop = min(remaining, key=lambda item: haversine(*current, *item["point"]))
+        total_distance += haversine(*current, *stop["point"])
+        stops.append(stop)
+        current = stop["point"]
+        remaining.remove(stop)
+    total_distance += haversine(*current, *buyer_point)
+    total_quantity = sum(row["quantity"] for row in rows)
+    estimated_payout = total_distance * 8 + len(stops) * 150
+    for stop in stops:
+        stop.pop("point", None)
+    return {
+        "route_id": route_id,
+        "stops": stops,
+        "buyer_id": rows[0]["buyer_id"],
+        "buyer_name": rows[0]["buyer_name"],
+        "buyer_location": rows[0]["buyer_location"],
+        "total_distance": round(total_distance, 2),
+        "estimated_payout": round(estimated_payout, 2),
+        "total_quantity": total_quantity,
+        "stop_count": len(stops),
+        "capacity_warning": total_quantity > 100,
+        "capacity_warning_text": (
+            "Route exceeds the common 100-quintal vehicle reference capacity."
+            if total_quantity > 100 else None
+        ),
+        "order_ids": [row["id"] for row in rows],
+    }
+
+
+def _route_rows(where: str = "", args: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    query = """SELECT o.id,o.quantity,o.delivery_status,o.buyer_id,o.route_id,
+                      l.location AS farmer_location, farmer.name AS farmer_name,
+                      farmer.phone AS farmer_phone,
+                      buyer.name AS buyer_name, buyer.location AS buyer_location,
+                      o.status, o.payment_status, o.transporter_id
+               FROM orders o
+               JOIN listings l ON l.id=o.listing_id
+               JOIN users farmer ON farmer.id=l.farmer_id
+               JOIN users buyer ON buyer.id=o.buyer_id"""
+    if where:
+        query += f" WHERE {where}"
+    query += " ORDER BY o.buyer_id,o.id"
+    with get_connection() as conn:
+        return rows_to_dict(conn.execute(query, args).fetchall())
+
+
+def _available_route_groups() -> list[dict[str, Any]]:
+    rows = _route_rows(
+        "o.transporter_id IS NULL AND o.status IN ('pending','countered','accepted')"
+    )
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(row["buyer_id"], []).append(row)
+    return [
+        _route_from_rows(group, _route_id([row["id"] for row in group]))
+        for group in groups.values() if len(group) >= 2
+    ]
+
+
+@app.get("/api/routes/available")
+def available_routes() -> list[dict[str, Any]]:
+    return _available_route_groups()
+
+
+@app.post("/api/routes/{route_id}/claim")
+def claim_route(route_id: str, payload: RouteClaimRequest) -> dict[str, Any]:
+    with get_connection() as conn:
+        transporter = conn.execute(
+            "SELECT id,role FROM users WHERE id=?", (payload.transporter_id,)
+        ).fetchone()
+    if not transporter or transporter["role"] != "transporter":
+        raise HTTPException(400, "Only a transporter can claim routes")
+    matching = [route for route in _available_route_groups() if route["route_id"] == route_id]
+    if not matching:
+        with get_connection() as conn:
+            claimed = conn.execute(
+                "SELECT 1 FROM orders WHERE route_id=? LIMIT 1", (route_id,)
+            ).fetchone()
+        if claimed:
+            raise HTTPException(409, "Route has already been claimed")
+        raise HTTPException(404, "Route is no longer available")
+    order_ids = matching[0]["order_ids"]
+    with get_connection() as conn:
+        placeholders = ",".join("?" for _ in order_ids)
+        current = conn.execute(
+            f"SELECT id,transporter_id FROM orders WHERE id IN ({placeholders})",
+            order_ids,
+        ).fetchall()
+        if len(current) != len(order_ids) or any(row["transporter_id"] for row in current):
+            raise HTTPException(409, "One or more orders in this route are already claimed")
+        conn.execute(
+            f"UPDATE orders SET transporter_id=?,route_id=?,updated_at=CURRENT_TIMESTAMP "
+            f"WHERE id IN ({placeholders})",
+            (payload.transporter_id, route_id, *order_ids),
+        )
+    return next(route for route in matching if route["route_id"] == route_id)
+
+
+@app.get("/api/transporter/{transporter_id}/routes")
+def transporter_routes(transporter_id: int) -> list[dict[str, Any]]:
+    rows = _route_rows("o.transporter_id=? AND o.route_id IS NOT NULL", (transporter_id,))
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(row["route_id"], []).append(row)
+    return [_route_from_rows(group, route_id) for route_id, group in groups.items()]
+
+
+@app.post("/api/orders/{order_id}/pickup")
+def transporter_pickup(order_id: int, payload: TransportPhotoRequest) -> dict[str, Any]:
+    order = _order(order_id)
+    if order.get("transporter_id") != payload.transporter_id:
+        raise HTTPException(403, "Only the assigned transporter can pick up this order")
+    if order["payment_status"] != "ESCROW_HELD":
+        raise HTTPException(400, "Cannot pick up delivery — payment not yet escrowed")
+    if order["order_status"] not in ("CONFIRMED", "PICKUP_SCHEDULED"):
+        raise HTTPException(400, f"Cannot pick up — order is {order['order_status']}")
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE orders SET pickup_photo_url=?,actual_pickup_at=CURRENT_TIMESTAMP,
+               delivery_status='in_transit',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (payload.photo_url, order_id),
+        )
+    return _order(order_id)
+
+
+@app.post("/api/orders/{order_id}/deliver")
+def transporter_deliver(order_id: int, payload: TransportPhotoRequest) -> dict[str, Any]:
+    order = _order(order_id)
+    if order.get("transporter_id") != payload.transporter_id:
+        raise HTTPException(403, "Only the assigned transporter can deliver this order")
+    if order["order_status"] != "IN_TRANSIT":
+        raise HTTPException(400, f"Cannot deliver — order is {order['order_status']}")
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE orders SET transporter_delivery_photo_url=?,
+               delivery_status='delivered',updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (payload.photo_url, order_id),
+        )
     return _order(order_id)
 
 
