@@ -174,7 +174,7 @@ export default function FarmerFlow({ user, onLogout }) {
 
       {orders.length > 0 && <section className="card"><div className="section-heading"><h3>My Listings — Buyer Interest</h3><button className="link" onClick={refresh}>Refresh</button></div><div className="listing-list">{orders.map((order) => <div className="listing" key={order.id}><span className="crop-icon">📩</span><div><b>{order.crop} · {order.buyer_name}</b><small>{order.quantity} · {money(order.current_offer_price || order.agreed_price)}</small></div><span className={`status ${order.status}`}>{order.status}</span><button className="primary small" onClick={() => openOrder(order)}>Open buyer request</button></div>)}</div></section>}
 
-      {selectedOrder && <OrderTracking order={selectedOrder} role="farmer" counterPrice={counterPrice} setCounterPrice={setCounterPrice} suggestion={suggestion} onAccept={() => orderAction(selectedOrder.id, 'accept')} onCounter={() => orderAction(selectedOrder.id, 'counter', { counter_price: Number(counterPrice), by: 'farmer' })} onSuggest={getSuggestion} onAdvance={() => orderAction(selectedOrder.id, 'advance')} onClose={() => setSelectedOrder(null)} />}
+      {selectedOrder && <OrderTracking order={selectedOrder} role="farmer" counterPrice={counterPrice} setCounterPrice={setCounterPrice} suggestion={suggestion} onAccept={() => orderAction(selectedOrder.id, 'accept')} onCounter={() => orderAction(selectedOrder.id, 'counter', { counter_price: Number(counterPrice), by: 'farmer' })} onSuggest={getSuggestion} onAdvance={selectedOrder.order_status === 'CONFIRMED' && selectedOrder.payment_status === 'ESCROW_HELD' ? () => orderAction(selectedOrder.id, 'advance') : undefined} onClose={() => setSelectedOrder(null)} />}
       {modal}
     </main>
   </div>;

@@ -34,3 +34,19 @@ Demo accounts:
 - Buyer: `freshmart@agri.demo` / `fresh123`
 
 Passwords are intentionally plaintext because this is a local demo only.
+
+## Delivery regression tests
+
+With the Python virtual environment active, run from the repository root:
+
+```sh
+pip install -r backend/requirements-dev.txt
+python -m unittest backend.test_order_delivery
+npm --prefix frontend ci
+npm --prefix frontend test
+npm --prefix frontend run build
+```
+
+Backend tests use an isolated SQLite database and simulate route claiming,
+pickup, and delivery through the API. Frontend tests check farmer and transporter
+actions with mocked API responses.

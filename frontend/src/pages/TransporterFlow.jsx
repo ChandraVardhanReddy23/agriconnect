@@ -83,7 +83,20 @@ export default function TransporterFlow({ user, onLogout }) {
             const allPickedUp = route.stops.every((stop) => stop.orders.every(
               (order) => ['in_transit', 'delivered', 'completed'].includes(order.delivery_status),
             ));
-            return <article className="card route-card" key={route.route_id}><div className="section-heading"><div><h3>{route.route_id}</h3><p className="muted">{route.buyer_name} · {route.buyer_location} · {route.total_distance} km</p></div><strong>{money(route.estimated_payout)}</strong></div>{route.stops.map((stop) => <div className="route-stop" key={stop.location}><div><b>{stop.farmer_name}</b><small>{stop.location} · {stop.farmer_phone || 'No phone provided'} · {stop.quantity} quintals</small></div><div className="route-orders">{stop.orders.map((order) => <div key={order.id} className="route-order"><span className={`status ${order.delivery_status}`}>{order.delivery_status}</span>{order.order_status === 'CONFIRMED' && order.payment_status === 'paid' && (order.delivery_status === 'placed' || order.delivery_status === 'pickup_scheduled') ? <PhotoAction label="Mark Picked Up" onPhoto={(photo) => updateOrder(order.id, 'pickup', photo)} /> : order.order_status !== 'CONFIRMED' ? <small className="muted">Waiting for acceptance</small> : order.payment_status !== 'paid' ? <small className="muted">Waiting for escrow</small> : order.delivery_status === 'in_transit' && allPickedUp ? <PhotoAction label="Mark Delivered" onPhoto={(photo) => updateOrder(order.id, 'deliver', photo)} /> : order.delivery_status === 'in_transit' ? <small className="muted">Waiting for all pickups</small> : <small className="muted">Complete</small>}</div>)}</div></div>)}</article>;
+            return <article className="card route-card" key={route.route_id}><div className="section-heading"><div><h3>{route.route_id}</h3><p className="muted">{route.buyer_name} · {route.buyer_location} · {route.total_distance} km</p></div><strong>{money(route.estimated_payout)}</strong></div>{route.stops.map((stop) => <div className="route-stop" key={stop.location}><div><b>{stop.farmer_name}</b><small>{stop.location} · {stop.farmer_phone || 'No phone provided'} · {stop.quantity} quintals</small></div><div className="route-orders">{stop.orders.map((order) => <div key={order.id} className="route-order">
+              <span className={`status ${order.delivery_status}`}>{order.delivery_status}</span>
+              {['MATCHED', 'NEGOTIATING'].includes(order.order_status)
+                ? <small className="muted">Waiting for acceptance</small>
+                : ['CONFIRMED', 'PICKUP_SCHEDULED'].includes(order.order_status)
+                  ? order.payment_status === 'paid'
+                    ? <PhotoAction label="Mark Picked Up" onPhoto={(photo) => updateOrder(order.id, 'pickup', photo)} />
+                    : <small className="muted">Waiting for escrow</small>
+                  : order.order_status === 'IN_TRANSIT'
+                    ? allPickedUp
+                      ? <PhotoAction label="Mark Delivered" onPhoto={(photo) => updateOrder(order.id, 'deliver', photo)} />
+                      : <small className="muted">Waiting for all pickups</small>
+                    : <small className="muted">Complete</small>}
+            </div>)}</div></div>)}</article>;
           }) : <p className="muted">Claim a route to manage its stops here.</p>}</div>}
       </section>
     </div>

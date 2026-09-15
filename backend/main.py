@@ -487,15 +487,17 @@ def pay_order(order_id: int, payload: PaymentRequest) -> dict[str, Any]:
 @app.post("/api/orders/{order_id}/advance")
 def advance_order(order_id: int) -> dict[str, Any]:
     order = _order(order_id)
+    if order["order_status"] in ("PICKUP_SCHEDULED", "IN_TRANSIT"):
+        raise HTTPException(
+            400, "Cannot advance delivery — use the transporter /pickup and /deliver endpoints with a photo",
+        )
     if order["payment_status"] != "ESCROW_HELD":
         raise HTTPException(400, "Cannot advance delivery — payment not yet escrowed")
-    if order["order_status"] not in ("CONFIRMED", "PICKUP_SCHEDULED", "IN_TRANSIT"):
+    if order["order_status"] != "CONFIRMED":
         raise HTTPException(400, f"Cannot advance — order is {order['order_status']}")
-    next_status = {"CONFIRMED": "pickup_scheduled", "PICKUP_SCHEDULED": "in_transit",
-                   "IN_TRANSIT": "delivered"}[order["order_status"]]
     with get_connection() as conn:
-        conn.execute("UPDATE orders SET delivery_status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                     (next_status, order_id))
+        conn.execute("UPDATE orders SET delivery_status='pickup_scheduled',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                     (order_id,))
     return _order(order_id)
 
 

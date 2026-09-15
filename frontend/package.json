@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test order-delivery.test.js",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
+    "react-test-renderer": "18.3.1",
     "vite": "^5.4.8"
   }
 }

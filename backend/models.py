@@ -131,4 +131,11 @@ class RouteClaimRequest(BaseModel):
 
 class TransportPhotoRequest(BaseModel):
     transporter_id: int
-    photo_url: str = Field(default="", max_length=2_000_000)
+    photo_url: str = Field(min_length=1, max_length=2_000_000)
+
+    @field_validator("photo_url")
+    @classmethod
+    def photo_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("A pickup or delivery photo is required")
+        return value
