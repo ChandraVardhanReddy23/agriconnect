@@ -15,11 +15,16 @@ function getValidActions(order, userRole) {
       ? { actions: ['pay'], message: null }
       : { actions: [], message: 'Waiting for buyer to complete payment.' };
   }
-  if (['CONFIRMED', 'PICKUP_SCHEDULED', 'IN_TRANSIT'].includes(orderStatus)
-      && paymentStatus === 'ESCROW_HELD') {
+  if (orderStatus === 'CONFIRMED' && paymentStatus === 'ESCROW_HELD') {
     return userRole === 'farmer'
       ? { actions: ['advance'], message: null }
-      : { actions: [], message: 'Payment in escrow — waiting for farmer to ship.' };
+      : { actions: [], message: 'Payment in escrow — waiting for pickup.' };
+  }
+  if (orderStatus === 'PICKUP_SCHEDULED') {
+    return { actions: [], message: 'Pickup scheduled — waiting for transporter pickup.' };
+  }
+  if (orderStatus === 'IN_TRANSIT') {
+    return { actions: [], message: 'In transit — waiting for transporter delivery.' };
   }
   if (orderStatus === 'DELIVERED') {
     return userRole === 'buyer'
@@ -57,7 +62,7 @@ export default function OrderTracking({ order, role, counterPrice, setCounterPri
       <div className="progress-label"><span>Payment status</span><b>{order.payment_status}</b></div>
       <div className="progress-track payment"><span style={{ width: `${paymentProgress}%` }} /></div>
       <div className="form-actions">
-        {validActions.actions.includes('advance') && <button className="secondary" onClick={onAdvance}>Confirm Delivery Sent</button>}
+        {validActions.actions.includes('advance') && <button className="secondary" onClick={onAdvance}>Schedule Pickup</button>}
         {validActions.actions.includes('pay') && <button className="secondary" onClick={onPay}>Pay / Hold Escrow</button>}
         {validActions.actions.includes('confirm_quality') && <button className="secondary" onClick={onConfirmQuality}>Confirm Quality</button>}
         {validActions.actions.includes('reject_quality') && <button className="secondary danger" onClick={onRejectQuality}>Reject Quality</button>}
