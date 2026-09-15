@@ -21,6 +21,9 @@ export default function FarmerFlow({ user, onLogout }) {
   const [marketAdvice, setMarketAdvice] = useState([]);
   const [logistics, setLogistics] = useState(null);
   const [message, setMessage] = useState('');
+  const [nlText, setNlText] = useState('');
+  const [structuredMode, setStructuredMode] = useState(false);
+  const [extractedListing, setExtractedListing] = useState(null);
   const { setOpenPhoto, modal } = usePhotoModal();
   const set = (event) => setForm({ ...form, [event.target.name]: event.target.value });
 
@@ -44,17 +47,23 @@ export default function FarmerFlow({ user, onLogout }) {
     setLogistics(opportunities.filter((item) => item && item.savings > 0)
       .sort((a, b) => b.savings - a.savings)[0] || null);
     const adviceResults = await Promise.all(nextListings.slice(0, 3).map(async (listing) => {
+      if (!listing.crop || !listing.location) {
+        console.warn(`Skipping advisory fetch for listing ${listing.id} — missing location`);
+        return null;
+      }
       try {
         const result = await api(`/advisory/${encodeURIComponent(listing.crop)}/${encodeURIComponent(listing.location)}`);
         const daysToHarvest = listing.harvest_date ? Math.ceil((new Date(listing.harvest_date) - new Date()) / 86400000) : 0;
-        return { ...result, crop: listing.crop, harvest_window_advice: !result.available
+        return { ...result, crop: listing.crop, listing_id: listing.id, harvest_window_advice: !result.available
           ? 'Price timing will appear when regional mandi data is available.'
           : daysToHarvest > 5 && result.change_percent > 0
           ? 'Consider waiting closer to your harvest date — prices are trending up.'
           : 'Good window to sell now.' };
       } catch { return null; }
     }));
-    setMarketAdvice(adviceResults.filter(Boolean));
+    setMarketAdvice(Array.from(
+      new Map(adviceResults.filter(Boolean).map((item) => [item.crop, item])).values(),
+    ));
     if (selectedOrder) setSelectedOrder(nextOrders.find((order) => order.id === selectedOrder.id) || selectedOrder);
   }
   function handlePhoto(event) {
@@ -75,6 +84,36 @@ export default function FarmerFlow({ user, onLogout }) {
       setMessage('Your produce is live for buyers!'); setStep(1); refresh();
     } catch (err) { setMessage(err.message); }
   }
+  async function extractDetails(event) {
+    event.preventDefault();
+    setMessage('');
+    try {
+      const listing = await api('/listings/ingest', {
+        method: 'POST',
+        body: JSON.stringify({ farmer_id: user.id, raw_text: nlText, photo_url: form.photo_url }),
+      });
+      setExtractedListing(listing);
+      setForm((previous) => ({ ...previous, ...listing, farmer_id: user.id }));
+    } catch (err) {
+      setMessage(err.message);
+      setStructuredMode(true);
+    }
+  }
+  async function saveExtractedListing(event) {
+    event.preventDefault();
+    setMessage('');
+    try {
+      const listing = await api(`/listings/${extractedListing.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...form, farmer_id: user.id, quantity: Number(form.quantity), price: Number(form.price) }),
+      });
+      setExtractedListing(listing);
+      setMessage('Listing saved successfully.');
+      await refresh();
+    } catch (err) {
+      setMessage(err.message);
+    }
+  }
   async function showMatches(listing) {
     try {
       setSelectedListing(listing);
@@ -86,9 +125,14 @@ export default function FarmerFlow({ user, onLogout }) {
       setMatches(withProfit);
     } catch (err) { setMessage(err.message); }
   }
-  async function openOrder(order) {
-    setSelectedOrder(order);
+  async function openOrder(orderOrMatch) {
     setSuggestion('');
+    try {
+      const fullOrder = await api(`/orders/${orderOrMatch.id}`);
+      setSelectedOrder(fullOrder);
+    } catch (err) {
+      setMessage(err.message);
+    }
   }
   async function orderAction(orderId, path, body) {
     try {
@@ -111,18 +155,18 @@ export default function FarmerFlow({ user, onLogout }) {
     <main className="content">
       <div className="hero"><div><p className="eyebrow">FARMER DASHBOARD</p><h2>Sell your harvest with confidence.</h2><p className="muted">List your crop, compare buyers and manage every order step.</p></div><div className="hero-icon">🚜</div></div>
       <div className="grid two">
-        <section className="card"><h3>List new produce</h3><div className="steps"><span className={step >= 1 ? 'on' : ''}>1 Crop</span><span className={step >= 2 ? 'on' : ''}>2 Details</span><span className={step >= 3 ? 'on' : ''}>3 Publish</span></div>
+        <section className="card"><h3>List new produce</h3>{!structuredMode && !extractedListing ? <><p className="muted">Describe your harvest and let the AI agent extract the listing details.</p><form onSubmit={extractDetails}><label>Describe your produce in your own words<textarea value={nlText} onChange={(event) => setNlText(event.target.value)} placeholder="40 quintals grade A tomatoes in Guntur, ready in 3 days, expecting ₹1800/quintal" required /></label>{message && <div className="error">{message}</div>}<div className="form-actions"><button className="primary">Extract Details</button></div></form><button className="link" type="button" onClick={() => setStructuredMode(true)}>Prefer to fill a form instead?</button></> : extractedListing ? <><p className="muted">Here's what we understood — edit anything that looks wrong.</p><form onSubmit={saveExtractedListing}><label>Crop<input value={form.crop} onChange={(event) => setForm({ ...form, crop: event.target.value })} required /></label><div className="form-row"><label>Quantity<input type="number" min="1" value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} required /></label><label>Quality grade<input value={form.quality} onChange={(event) => setForm({ ...form, quality: event.target.value })} /></label></div><label>Location<input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></label><label>Price<input type="number" min="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} required /></label><label>Availability<input type="date" value={form.harvest_date || ''} onChange={(event) => setForm({ ...form, harvest_date: event.target.value })} /></label>{message && <div className="success">{message}</div>}<div className="form-actions"><button className="secondary" type="button" onClick={() => { setExtractedListing(null); setStructuredMode(true); }}>Use structured form</button><button className="primary">Edit and Save</button></div></form></> : <><div className="steps"><span className={step >= 1 ? 'on' : ''}>1 Crop</span><span className={step >= 2 ? 'on' : ''}>2 Details</span><span className={step >= 3 ? 'on' : ''}>3 Publish</span></div>
           <form onSubmit={step < 3 ? (event) => { event.preventDefault(); setStep(step + 1); } : publish}>
             {step === 1 && <><label>What are you selling?<input name="crop" placeholder="e.g. Tomato, Onion, Wheat" value={form.crop} onChange={set} required /></label><label>Variety (optional)<input name="variety" value={form.variety} onChange={set} /></label></>}
-            {step === 2 && <><div className="form-row"><label>Quantity<input name="quantity" type="number" min="1" value={form.quantity} onChange={set} required /></label><label>Unit<select name="unit" value={form.unit} onChange={set}><option>quintal</option><option>kg</option><option>tonne</option></select></label></div><label>Expected price<input name="price" type="number" min="1" value={form.price} onChange={set} required /></label><label>Location<input name="location" value={form.location} onChange={set} /></label><label>Photo (optional)<input type="file" accept="image/*" onChange={handlePhoto} /></label>{form.photo_url && <img src={form.photo_url} alt="Produce preview" className="listing-thumb" onClick={() => setOpenPhoto(form.photo_url)} />}</>}
+            {step === 2 && <><div className="form-row"><label>Quantity<input name="quantity" type="number" min="1" value={form.quantity} onChange={set} required /></label><label>Unit<select name="unit" value={form.unit} onChange={set}><option>quintal</option><option>kg</option><option>tonne</option></select></label></div><label>Expected price<input name="price" type="number" min="1" value={form.price} onChange={set} required /></label><label>Location<input name="location" value={form.location} onChange={set} required /></label><label>Photo (optional)<input type="file" accept="image/*" onChange={handlePhoto} /></label>{form.photo_url && <img src={form.photo_url} alt="Produce preview" className="listing-thumb" onClick={() => setOpenPhoto(form.photo_url)} />}</>}
             {step === 3 && <><div className="review"><b>{form.crop} {form.variety && `(${form.variety})`}</b><span>{form.quantity} {form.unit} · {money(form.price)}</span><span>{form.location}</span></div><label>Quality notes<textarea name="description" value={form.description} onChange={set} /></label></>}
             {message && <div className="success">{message}</div>}<div className="form-actions">{step > 1 && <button type="button" className="secondary" onClick={() => setStep(step - 1)}>Back</button>}<button className="primary">{step === 3 ? 'Publish listing' : 'Continue'}</button></div>
-          </form>
+          </form><button className="link" type="button" onClick={() => setStructuredMode(false)}>Use natural-language entry instead</button></>}
         </section>
         <section className="card advisory"><h3>🌤 Crop advisor</h3><p className="muted">Ask a quick question about your crop.</p><form onSubmit={askAdvice}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="How can I prevent pests?" required /><button className="secondary">Ask advisor</button></form>{advice && <div className="advice"><ReactMarkdown>{advice}</ReactMarkdown></div>}</section>
       </div>
 
-      {marketAdvice.length > 0 && <section className="card advisory"><h3>🌤 Proactive market guidance</h3>{marketAdvice.map((item) => <div className="advice" key={item.crop}><b>{item.crop}: {item.message}</b><br />{item.harvest_window_advice}</div>)}</section>}
+      {marketAdvice.length > 0 && <section className="card advisory"><h3>🌤 Proactive market guidance</h3>{marketAdvice.map((item, index) => <div className="advice" key={item.listing_id ?? `${item.crop}-${index}`}><b>{item.crop}: {item.message}</b><br />{item.harvest_window_advice}</div>)}</section>}
       <section className="card"><div className="section-heading"><h3>My listings</h3><button className="link" onClick={refresh}>Refresh</button></div>{listings.length ? <div className="listing-list">{listings.map((item) => <div className="listing" key={item.id}>{item.photo_url ? <img src={item.photo_url} alt={item.crop} className="listing-thumb" onClick={() => setOpenPhoto(item.photo_url)} /> : <span className="crop-icon">🥬</span>}<div><b>{item.crop} {item.variety && `· ${item.variety}`}</b><small>{item.quantity} {item.unit} · {item.location}</small></div><strong>{money(item.price)}<small>{item.status}</small></strong><button className="secondary small" onClick={() => showMatches(item)}>Match buyers</button></div>)}</div> : <p className="muted">No listings yet.</p>}</section>
 
       {selectedListing && <section className="card"><div className="section-heading"><h3>3. Match results for {selectedListing.crop}</h3><button className="link" onClick={() => setSelectedListing(null)}>Close</button></div>{matches.length ? <div className="match-grid">{matches.map((match) => <div className="match-card" key={match.id || `${match.buyer_id}-${match.crop}`}><div className="section-heading"><div><b>{match.buyer_name}</b><small>{match.buyer_location} · Request #{match.id || match.buyer_id}</small></div><strong>{Math.round(match.total_score * 100)}%</strong></div><div className="score-bar"><span style={{ width: `${match.total_score * 100}%` }} /></div><div className="score-breakdown"><span>Price {match.score_breakdown.price_score}</span><span>Quantity {match.score_breakdown.qty_score}</span><span>Distance {match.score_breakdown.dist_score}</span><span>Quality {match.score_breakdown.quality_score}</span><span>Delivery {match.score_breakdown.delivery_score}</span></div>{match.preview_profit && <div className="advice">Estimated net payout: <b>{money(match.preview_profit.estimated_net_payout)}</b></div>}{match.id && <button className="secondary small" onClick={() => openOrder(match)}>Compare opportunity</button>}</div>)}</div> : <p className="muted">No buyer requests yet for this listing.</p>}</section>}

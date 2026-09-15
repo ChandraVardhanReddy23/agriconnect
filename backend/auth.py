@@ -5,7 +5,7 @@ from .models import LoginRequest, SignupRequest
 
 
 def public_user(user: dict) -> dict:
-    return {key: user[key] for key in ("id", "name", "email", "role", "location", "phone")}
+    return {key: user[key] for key in ("id", "name", "email", "role", "location", "phone", "rating")}
 
 
 def signup(payload: SignupRequest) -> dict:
