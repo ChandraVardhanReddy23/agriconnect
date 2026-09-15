@@ -18,29 +18,42 @@ def fetch_live_prices(crop: str, state: str, limit: int = 10) -> list[dict]:
     params = {
         "api-key": api_key,
         "format": "json",
-        "limit": max(1, min(limit, 100)),
-        "filters[commodity]": crop,
-        "filters[state]": state,
+        # This dataset often ignores or mishandles server-side filter casing.
+        "limit": 1000,
     }
     request = Request(
         f"{AGMARKNET_URL}?{urlencode(params)}",
         headers={"Accept": "application/json", "User-Agent": "AgriConnect/1.0"},
     )
     try:
-        with urlopen(request, timeout=15) as response:
+        with urlopen(request, timeout=20) as response:
             payload = json.load(response)
         records = payload.get("records", [])
         if not isinstance(records, list):
             return []
+        print(f"[mandi_api] Fetched {len(records)} raw records from Agmarknet")
 
+        crop_lower = crop.strip().lower()
+        state_lower = state.strip().lower()
         prices = []
         for record in records:
+            record_crop = str(
+                record.get("commodity") or record.get("Commodity") or ""
+            ).strip().lower()
+            record_state = str(
+                record.get("state") or record.get("State") or ""
+            ).strip().lower()
+            if crop_lower not in record_crop and record_crop not in crop_lower:
+                continue
+            if state_lower and state_lower not in record_state:
+                continue
+
             try:
                 price = float(
                     record.get("modal_price")
                     or record.get("Modal_Price")
                     or record.get("max_price")
-                    or record.get("Max Price")
+                    or record.get("Max_Price")
                 )
                 market = str(record.get("market") or record.get("Market") or "").strip()
                 recorded_on = str(
@@ -62,6 +75,9 @@ def fetch_live_prices(crop: str, state: str, limit: int = 10) -> list[dict]:
                 )
             except (TypeError, ValueError):
                 continue
+            if len(prices) >= limit:
+                break
+        print(f"[mandi_api] Matched {len(prices)} records for crop={crop}, state={state}")
         return prices
     except Exception:
         return []
