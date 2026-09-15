@@ -36,7 +36,7 @@ export default function OrderTracking({ order, role, counterPrice, setCounterPri
   const paymentProgress = { NONE: 10, PENDING: 25, ESCROW_HELD: 60, RELEASED: 100, DISPUTED: 100 }[order.payment_status] || 10;
   return <section className="card order-panel">
     <div className="section-heading"><h3>4–6. {farmer ? 'Opportunity, negotiation and tracking' : 'Negotiation and order tracking'}</h3><button className="link" onClick={onClose}>Close</button></div>
-    <div className="order-summary"><b>{order.crop} ({order.quantity} {order.quantity === 1 ? 'quintal' : 'quintals'}) with {farmer ? order.buyer_name : order.farmer_name}</b><span>Current offer: <strong>{money(order.current_offer_price)}</strong></span></div>
+    <div className="order-summary"><b>{order.crop} ({order.quantity} {order.quantity === 1 ? 'quintal' : 'quintals'}) with {farmer ? order.buyer_name : order.farmer_name}{!farmer && <span className="rating">★ {order.farmer_rating?.toFixed(1) ?? '—'}</span>}</b><span>Current offer: <strong>{money(order.current_offer_price)}</strong></span></div>
     <div className="turn-label">{validActions.message || `Your turn — choose an action below.`}</div>
     <div className="profit-grid">
       {farmer ? <>

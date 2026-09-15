@@ -11,6 +11,8 @@ from .models import (
     ListingUpdate, MatchRequest, OrderCreate, PaymentRequest, QualityRequest, SignupRequest,
 )
 
+PLATFORM_FEE_RATE = 0.0  # 0% introductory rate during pilot phase
+
 CITY_COORDS = {
     "nashik": (20.0059, 73.7897), "pune": (18.5204, 73.8567),
     "aurangabad": (19.8762, 75.3433), "nagpur": (21.1458, 79.0882),
@@ -244,7 +246,7 @@ def preview_profit(listing_id: int, buyer_id: int) -> dict[str, Any]:
     buyer_point = location_point(buyer["location"])
     distance = haversine(*farmer_point, *buyer_point)
     estimated_logistics = distance * 8 * listing["quantity"] / 100
-    estimated_platform_fee = estimated_total * 0.02
+    estimated_platform_fee = estimated_total * PLATFORM_FEE_RATE
     return {
         "buyer_id": buyer_id, "offer_price": offer, "estimated_total": estimated_total,
         "estimated_logistics": estimated_logistics, "estimated_platform_fee": estimated_platform_fee,
@@ -354,7 +356,7 @@ def _add_order_values(order: dict[str, Any]) -> dict[str, Any]:
     if current_offer:
         total_amount = current_offer * order["quantity"]
         order["total_amount"] = round(total_amount, 2)
-        order["platform_fee"] = round(total_amount * 0.02, 2)
+        order["platform_fee"] = round(total_amount * PLATFORM_FEE_RATE, 2)
         order["logistics_cost"] = round(total_amount * 0.08, 2)
         order["net_farmer_payout"] = round(total_amount - order["platform_fee"] - order["logistics_cost"], 2)
         order["payout_is_final"] = order_status in (
