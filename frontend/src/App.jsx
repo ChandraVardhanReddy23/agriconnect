@@ -3,6 +3,7 @@ import { api } from './api';
 import Login from './pages/Login';
 import FarmerFlow from './pages/FarmerFlow';
 import BuyerFlow from './pages/BuyerFlow';
+import TransporterFlow from './pages/TransporterFlow';
 
 export default function App() {
   const [user, setUser] = useState(() => {
@@ -16,7 +17,7 @@ export default function App() {
 
   if (!user) return <Login onLogin={setUser} />;
   const logout = () => setUser(null);
-  return user.role === 'farmer'
-    ? <FarmerFlow user={user} onLogout={logout} />
-    : <BuyerFlow user={user} onLogout={logout} />;
+  if (user.role === 'farmer') return <FarmerFlow user={user} onLogout={logout} />;
+  if (user.role === 'transporter') return <TransporterFlow user={user} onLogout={logout} />;
+  return <BuyerFlow user={user} onLogout={logout} />;
 }
