@@ -23,7 +23,15 @@ export default function BuyerFlow({ user, onLogout }) {
     catch (err) { setMessage(err.message); }
   }
   async function loadOrders() { setOrders(await api(`/orders?user_id=${user.id}&role=buyer`)); }
-  function openOrder(order) { setSelectedOrder(order); setSuggestion(''); }
+  async function openOrder(orderOrMatch) {
+    setSuggestion('');
+    try {
+      const fullOrder = await api(`/orders/${orderOrMatch.id}`);
+      setSelectedOrder(fullOrder);
+    } catch (err) {
+      setMessage(err.message);
+    }
+  }
   async function orderAction(orderId, path, body) {
     try {
       const updated = await api(`/orders/${orderId}/${path}`, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) });

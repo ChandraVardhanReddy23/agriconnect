@@ -42,24 +42,24 @@ def get_advice(crop: str, question: str) -> str:
 
     try:
         from groq import Groq
-    except ImportError as exc:
-        raise RuntimeError("GROQ_API_KEY is set but groq package is not installed") from exc
-
-    client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
-        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-        temperature=0,
-        messages=[
-            {"role": "system", "content": (
-                "Return only JSON: {\"answer\":\"...\"}. The answer must be under 120 words, "
-                "with one-line summary followed by up to 4 bullet points using '- '. "
-                "Do not use headers or bold markdown."
-            )},
-            {"role": "user", "content": f"Crop: {crop}\nQuestion: {question}"},
-        ],
-    )
-    content = response.choices[0].message.content or ""
-    return _strict_json(content)["answer"]
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+            temperature=0,
+            messages=[
+                {"role": "system", "content": (
+                    "Return only JSON: {\"answer\":\"...\"}. The answer must be under 120 words, "
+                    "with one-line summary followed by up to 4 bullet points using '- '. "
+                    "Do not use headers or bold markdown."
+                )},
+                {"role": "user", "content": f"Crop: {crop}\nQuestion: {question}"},
+            ],
+        )
+        parsed = _strict_json(response.choices[0].message.content or "")
+        return parsed["answer"]
+    except Exception as exc:
+        print(f"WARNING: Groq advisory call failed, falling back: {exc}")
+        return _fallback(crop, question)
 
 
 def generate_market_narrative(
@@ -110,7 +110,7 @@ def extract_listing(raw_text: str) -> dict[str, Any]:
     prompt = (
         "Extract structured data from this farmer's produce listing. Return ONLY valid JSON "
         "with these exact keys: crop (string), quantity (number, in quintals), "
-        "quality_grade (one of 'A','B','C'), location (string), expected_price (number, per "
+        "quality_grade (one of 'A','B','C'), location (non-empty string), expected_price (number, per "
         "quintal), availability_start (YYYY-MM-DD), availability_end (YYYY-MM-DD). "
         "No other text, markdown, or code fences.\n\nListing:\n" + raw_text
     )

@@ -4,14 +4,14 @@ from datetime import datetime, timedelta
 from .db import get_connection, init_db
 
 USERS = [
-    ("Ravi Kumar", "ravi@agri.demo", "ravi123", "farmer", "Nashik", "9000000001"),
-    ("Meena Devi", "meena@agri.demo", "meena123", "farmer", "Pune", "9000000002"),
-    ("Arjun Patil", "arjun@agri.demo", "arjun123", "farmer", "Aurangabad", "9000000003"),
-    ("Sita Farms", "sita@agri.demo", "sita123", "farmer", "Nagpur", "9000000004"),
-    ("FreshMart", "freshmart@agri.demo", "fresh123", "buyer", "Mumbai", "9100000001"),
-    ("Green Basket", "green@agri.demo", "green123", "buyer", "Pune", "9100000002"),
-    ("Hotel Harvest", "hotel@agri.demo", "hotel123", "buyer", "Nashik", "9100000003"),
-    ("AgroFoods", "agro@agri.demo", "agro123", "buyer", "Nagpur", "9100000004"),
+    ("Ravi Kumar", "ravi@agri.demo", "ravi123", "farmer", "Nashik", "9000000001", 4.8),
+    ("Meena Devi", "meena@agri.demo", "meena123", "farmer", "Pune", "9000000002", 4.2),
+    ("Arjun Patil", "arjun@agri.demo", "arjun123", "farmer", "Aurangabad", "9000000003", 3.8),
+    ("Sita Farms", "sita@agri.demo", "sita123", "farmer", "Nagpur", "9000000004", 4.6),
+    ("FreshMart", "freshmart@agri.demo", "fresh123", "buyer", "Mumbai", "9100000001", 4.0),
+    ("Green Basket", "green@agri.demo", "green123", "buyer", "Pune", "9100000002", 4.0),
+    ("Hotel Harvest", "hotel@agri.demo", "hotel123", "buyer", "Nashik", "9100000003", 4.0),
+    ("AgroFoods", "agro@agri.demo", "agro123", "buyer", "Nagpur", "9100000004", 4.0),
 ]
 
 
@@ -25,7 +25,7 @@ def seed() -> None:
         ids = []
         for user in USERS:
             ids.append(conn.execute(
-                "INSERT INTO users (name,email,password,role,location,phone) VALUES (?,?,?,?,?,?)", user
+                "INSERT INTO users (name,email,password,role,location,phone,rating) VALUES (?,?,?,?,?,?,?)", user
             ).lastrowid)
         listings = [
             (ids[0], "Tomato", "Hybrid", 120, "quintal", 2200, "Nashik", "2026-09-01", "A", "Fresh red tomatoes"),

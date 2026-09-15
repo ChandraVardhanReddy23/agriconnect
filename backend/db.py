@@ -32,6 +32,7 @@ def init_db() -> None:
                 phone TEXT DEFAULT '',
                 lat REAL,
                 lon REAL,
+                rating REAL DEFAULT 4.0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS listings (
@@ -106,6 +107,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN lat REAL")
         if "lon" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN lon REAL")
+        if "rating" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN rating REAL DEFAULT 4.0")
         listing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(listings)").fetchall()}
         if "photo_url" not in listing_columns:
             conn.execute("ALTER TABLE listings ADD COLUMN photo_url TEXT DEFAULT ''")

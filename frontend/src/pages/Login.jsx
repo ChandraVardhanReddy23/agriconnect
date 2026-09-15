@@ -22,8 +22,8 @@ export default function Login({ onLogin }) {
       <div className="tabs"><button className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Log in</button><button className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Create account</button></div>
       <form onSubmit={submit}>
         {mode === 'signup' && <input name="name" placeholder="Full name / business" value={form.name} onChange={change} required />}
-        <input name="email" type="email" placeholder="Email" value={form.email} onChange={change} required />
-        <input name="password" type="password" placeholder="Password" value={form.password} onChange={change} required />
+        <input name="email" type="email" autoComplete="email" placeholder="Email" value={form.email} onChange={change} required />
+        <input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="Password" value={form.password} onChange={change} required />
         {mode === 'signup' && <><select name="role" value={form.role} onChange={change}><option value="farmer">I am a farmer</option><option value="buyer">I am a buyer</option></select><input name="location" placeholder="City / district" value={form.location} onChange={change} /></>}
         {error && <div className="error">{error}</div>}
         <button className="primary wide" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Enter AgriConnect' : 'Join AgriConnect'}</button>

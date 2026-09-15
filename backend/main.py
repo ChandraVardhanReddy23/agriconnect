@@ -8,7 +8,7 @@ from .llm import extract_listing, generate_market_narrative, get_advice
 from .matching import delivery_score, haversine, rank_matches
 from .models import (
     AdvisoryRequest, CounterRequest, DemandCreate, ListingCreate, ListingIngestRequest, LoginRequest,
-    MatchRequest, OrderCreate, PaymentRequest, QualityRequest, SignupRequest,
+    ListingUpdate, MatchRequest, OrderCreate, PaymentRequest, QualityRequest, SignupRequest,
 )
 
 CITY_COORDS = {
@@ -56,7 +56,7 @@ def auth_login(payload: LoginRequest) -> dict[str, Any]:
 @app.get("/api/users/{user_id}")
 def get_user(user_id: int) -> dict[str, Any]:
     with get_connection() as conn:
-        user = row_to_dict(conn.execute("SELECT id,name,email,role,location,phone FROM users WHERE id=?", (user_id,)).fetchone())
+        user = row_to_dict(conn.execute("SELECT id,name,email,role,location,phone,rating FROM users WHERE id=?", (user_id,)).fetchone())
     if not user:
         raise HTTPException(404, "User not found")
     return user
@@ -90,7 +90,7 @@ def list_listings(crop: str | None = None, farmer_id: int | None = None,
         args.append(farmer_id)
     with get_connection() as conn:
         rows = conn.execute(
-            f"""SELECT l.*, u.name AS farmer_name FROM listings l JOIN users u ON u.id=l.farmer_id
+            f"""SELECT l.*, u.name AS farmer_name, u.rating AS farmer_rating FROM listings l JOIN users u ON u.id=l.farmer_id
                 WHERE {' AND '.join(clauses)} ORDER BY l.created_at DESC""", args
         ).fetchall()
     return rows_to_dict(rows)
@@ -104,18 +104,45 @@ def ingest_listing(payload: ListingCreate | ListingIngestRequest) -> dict[str, A
         extracted = extract_listing(payload.raw_text)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
-    listing = ListingCreate(
-        farmer_id=payload.farmer_id,
-        crop=str(extracted["crop"]),
-        quantity=float(extracted["quantity"]),
-        price=float(extracted["expected_price"]),
-        location=str(extracted["location"]),
-        harvest_date=str(extracted["availability_start"]),
-        quality=str(extracted["quality_grade"]),
-        description=payload.raw_text,
-        photo_url=payload.photo_url,
-    )
+    try:
+        listing = ListingCreate(
+            farmer_id=payload.farmer_id,
+            crop=str(extracted["crop"]),
+            quantity=float(extracted["quantity"]),
+            price=float(extracted["expected_price"]),
+            location=str(extracted["location"]),
+            harvest_date=str(extracted["availability_start"]),
+            quality=str(extracted["quality_grade"]),
+            description=payload.raw_text,
+            photo_url=payload.photo_url,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            422, "Groq could not extract valid listing details; please use the structured form."
+        ) from exc
     return create_listing(listing)
+
+
+@app.patch("/api/listings/{listing_id}")
+def update_listing(listing_id: int, payload: ListingUpdate) -> dict[str, Any]:
+    with get_connection() as conn:
+        listing = conn.execute(
+            "SELECT farmer_id FROM listings WHERE id=?", (listing_id,)
+        ).fetchone()
+        if not listing:
+            raise HTTPException(404, "Listing not found")
+        if listing["farmer_id"] != payload.farmer_id:
+            raise HTTPException(403, "Only the listing farmer can update it")
+        conn.execute(
+            """UPDATE listings SET crop=?,variety=?,quantity=?,unit=?,price=?,location=?,
+               harvest_date=?,quality=?,description=?,photo_url=? WHERE id=?""",
+            (payload.crop, payload.variety, payload.quantity, payload.unit, payload.price,
+             payload.location, payload.harvest_date, payload.quality, payload.description,
+             payload.photo_url, listing_id),
+        )
+        return row_to_dict(conn.execute(
+            "SELECT * FROM listings WHERE id=?", (listing_id,)
+        ).fetchone())
 
 
 @app.post("/api/matches")
@@ -347,13 +374,22 @@ def _order(order_id: int) -> dict[str, Any]:
     with get_connection() as conn:
         order = row_to_dict(conn.execute(
             """SELECT o.*, l.crop,l.variety,l.location,l.farmer_id,l.price AS listing_price,
-                      u.name AS farmer_name, buyer.name AS buyer_name
+                      u.name AS farmer_name, u.rating AS farmer_rating, buyer.name AS buyer_name
                FROM orders o JOIN listings l ON l.id=o.listing_id
                JOIN users u ON u.id=l.farmer_id
                JOIN users buyer ON buyer.id=o.buyer_id WHERE o.id=?""", (order_id,)).fetchone())
     if not order:
         raise HTTPException(404, "Order not found")
     return _add_order_values(order)
+
+
+def _adjust_farmer_rating(farmer_id: int, delta: float) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE users SET rating = MAX(1.0, MIN(5.0, COALESCE(rating, 4.0) + ?))
+               WHERE id=?""",
+            (delta, farmer_id),
+        )
 
 
 @app.get("/api/orders/{order_id}")
@@ -475,6 +511,7 @@ def confirm_quality(order_id: int) -> dict[str, Any]:
             "UPDATE orders SET quality_status='passed',payment_status='released',status='completed',delivery_status='completed',updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (order_id,),
         )
+    _adjust_farmer_rating(order["farmer_id"], 0.05)
     return _order(order_id)
 
 
@@ -490,6 +527,7 @@ def reject_quality(order_id: int) -> dict[str, Any]:
             "UPDATE orders SET quality_status='failed',payment_status='disputed',status='disputed',updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (order_id,),
         )
+    _adjust_farmer_rating(order["farmer_id"], -0.3)
     return _order(order_id)
 
 

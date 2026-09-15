@@ -53,6 +53,20 @@ class ListingIngestRequest(BaseModel):
     photo_url: str = Field(default="", max_length=2_000_000)
 
 
+class ListingUpdate(BaseModel):
+    farmer_id: int
+    crop: str
+    variety: str = ""
+    quantity: float = Field(gt=0)
+    unit: str = "quintal"
+    price: float = Field(gt=0)
+    location: str = ""
+    harvest_date: str = ""
+    quality: str = "standard"
+    description: str = ""
+    photo_url: str = Field(default="", max_length=2_000_000)
+
+
 class DemandCreate(BaseModel):
     buyer_id: int
     crop: str
